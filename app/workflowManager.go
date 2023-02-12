@@ -47,11 +47,8 @@ func initService() (*Service, error) {
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(workflow.Auth)
 	w.RegisterWorkflow(workflow.Present)
-	w.RegisterActivity(workflow.CheckAccountExistsWithSufficientBalance)
-	w.RegisterActivity(workflow.CheckAccountExists)
-	w.RegisterActivity(workflow.PlaceAuthorization)
-	w.RegisterActivity(workflow.MatchPresentment)
-	w.RegisterActivity(workflow.PostPendingTransfer)
+	activities := &workflow.Activities{RedisClient: redisClient, TbClient: tbClient}
+	w.RegisterActivity(activities)
 
 	err = w.Start()
 	if err != nil {

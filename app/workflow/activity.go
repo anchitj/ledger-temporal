@@ -12,47 +12,28 @@ import (
 	"time"
 )
 
+type Activities struct {
+	RedisClient *redis.Client
+	TbClient    tb.Client
+}
+
 func generateTransferId(accountId tbtypes.Uint128) tbtypes.Uint128 {
 	transferId, err := tbtypes.HexStringToUint128(strconv.FormatInt(time.Now().Unix(), 10))
 	if err != nil {
 		log.Printf("Could not generate transfer id: %s", err)
 	}
-	log.Printf("Transfer id generated for account %s: %s", accountId, transferId)
+	//log.Printf("Transfer id generated for account %s: %s", accountId, transferId)
 	return transferId
 }
 
 func storeAuthorizationRedis(debitAccountId tbtypes.Uint128, amount uint64, transferId tbtypes.Uint128, redisClient *redis.Client) {
-	rclient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func(rclient *redis.Client) {
-		err := rclient.Close()
-		if err != nil {
-			log.Printf("Could not close redis client: %s", err)
-		}
-	}(rclient)
-	//err := rclient.RPush("authorizations:"+debitAccountId.String()+":amounts", amount)
-	//if err != nil {
-	//	log.Printf("Could not store authorization in redis: %s", err)
-	//	return err.Err()
-	//}
-	rclient.RPush("authorizations:"+debitAccountId.String()+":amounts:"+strconv.Itoa(int(amount))+":transfers", transferId.String())
+	redisClient.RPush("authorizations:"+debitAccountId.String()+":amounts:"+strconv.Itoa(int(amount))+":transfers", transferId.String())
 }
 
-func getAuthorizationRedis(debitAccountId tbtypes.Uint128, amount uint64, redisClient redis.Client) ([]tbtypes.Uint128, error) {
-	rclient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func(rclient *redis.Client) {
-		err := rclient.Close()
-		if err != nil {
-			log.Printf("Could not close redis client: %s", err)
-		}
-	}(rclient)
-
+func getAuthorizationRedis(debitAccountId tbtypes.Uint128, amount uint64, redisClient *redis.Client) ([]tbtypes.Uint128, error) {
 	key := fmt.Sprintf("authorizations:%s:amounts:%d:transfers", debitAccountId, amount)
 	log.Printf("Checking authorizations for Key: %s", key)
-	transfers, err := rclient.LRange(key, 0, -1).Result()
+	transfers, err := redisClient.LRange(key, 0, -1).Result()
 	if err != nil {
 		log.Printf("Could not get authorization from redis: %s", err)
 		return nil, err
@@ -78,7 +59,6 @@ func voidAuthorization(transferId tbtypes.Uint128, tbClient tb.Client) error {
 		log.Printf("Error creating transfer batch %s", err)
 		return err
 	}
-	log.Printf("created transfer ")
 	for _, t := range res {
 		id := int(t.Index)
 		log.Printf("Transfer %s created %d : id", t.Result, id)
@@ -86,19 +66,9 @@ func voidAuthorization(transferId tbtypes.Uint128, tbClient tb.Client) error {
 	return nil
 }
 
-func removeVoidAuthorizationRedis(debitAccountId tbtypes.Uint128, amount uint64, transferId tbtypes.Uint128, redisClient redis.Client) error {
-	rclient := redis.NewClient(&redis.Options{
-		Addr: "localhost:6379",
-	})
-	defer func(rclient *redis.Client) {
-		err := rclient.Close()
-		if err != nil {
-			log.Printf("Could not close redis client: %s", err)
-		}
-	}(rclient)
-
+func removeVoidAuthorizationRedis(debitAccountId tbtypes.Uint128, amount uint64, transferId tbtypes.Uint128, redisClient *redis.Client) error {
 	key := fmt.Sprintf("authorizations:%s:amounts:%d:transfers", debitAccountId, amount)
-	err := rclient.LRem(key, 0, transferId.String()).Err()
+	err := redisClient.LRem(key, 0, transferId.String()).Err()
 	if err != nil {
 		log.Printf("Could not remove authorization from redis: %s", err)
 		return err
@@ -106,7 +76,7 @@ func removeVoidAuthorizationRedis(debitAccountId tbtypes.Uint128, amount uint64,
 	return nil
 }
 
-func postPendingAuthorization(ctx context.Context, accountId tbtypes.Uint128, pendingId tbtypes.Uint128, tbClient tb.Client) error {
+func postPendingAuthorization(accountId tbtypes.Uint128, pendingId tbtypes.Uint128, tbClient tb.Client) error {
 	transfer := tbtypes.Transfer{
 		ID:        generateTransferId(accountId),
 		PendingID: pendingId,
@@ -119,22 +89,14 @@ func postPendingAuthorization(ctx context.Context, accountId tbtypes.Uint128, pe
 		log.Printf("Error creating transfer batch %s", err)
 		return err
 	}
-	log.Printf("created transfer ")
 	for _, t := range res {
 		log.Printf("Transfer %s created", t.Result)
 	}
 	return nil
 }
 
-func CheckAccountExists(ctx context.Context, accountId tbtypes.Uint128) (bool, error) {
-	tbClient, err := tb.NewClient(0, []string{"3000"}, 1)
-	if err != nil {
-		log.Printf("Error creating tbclient: %s", err)
-	}
-
-	defer tbClient.Close()
-
-	accounts, err := tbClient.LookupAccounts([]tbtypes.Uint128{accountId})
+func (a *Activities) CheckAccountExists(_ context.Context, accountId tbtypes.Uint128) (bool, error) {
+	accounts, err := a.TbClient.LookupAccounts([]tbtypes.Uint128{accountId})
 	if err != nil {
 		log.Printf("Could not fetch accounts: %s", err)
 		return false, err
@@ -145,15 +107,8 @@ func CheckAccountExists(ctx context.Context, accountId tbtypes.Uint128) (bool, e
 	return true, nil
 }
 
-func CheckAccountExistsWithSufficientBalance(ctx context.Context, accountId tbtypes.Uint128, amount uint64) (bool, error) {
-	tbClient, err := tb.NewClient(0, []string{"3000"}, 1)
-	if err != nil {
-		log.Printf("Error creating tbclient: %s", err)
-	}
-
-	defer tbClient.Close()
-
-	accounts, err := tbClient.LookupAccounts([]tbtypes.Uint128{accountId})
+func (a *Activities) CheckAccountExistsWithSufficientBalance(_ context.Context, accountId tbtypes.Uint128, amount uint64) (bool, error) {
+	accounts, err := a.TbClient.LookupAccounts([]tbtypes.Uint128{accountId})
 	if err != nil {
 		log.Printf("Could not fetch accounts: %s", err)
 		return false, err
@@ -172,15 +127,7 @@ func CheckAccountExistsWithSufficientBalance(ctx context.Context, accountId tbty
 	return true, nil
 }
 
-func PlaceAuthorization(ctx context.Context, debitAccountId tbtypes.Uint128, creditAccountId tbtypes.Uint128, amount uint64, redisClient *redis.Client) (tbtypes.Uint128, error) {
-	tbClient, err := tb.NewClient(0, []string{"3000"}, 1)
-	if err != nil {
-		log.Printf("Error creating tbclient: %s", err)
-	}
-
-	defer tbClient.Close()
-	//ledger, _ := tbtypes.HexStringToUint128("1")
-
+func (a *Activities) PlaceAuthorization(_ context.Context, debitAccountId tbtypes.Uint128, creditAccountId tbtypes.Uint128, amount uint64) (tbtypes.Uint128, error) {
 	transfer := tbtypes.Transfer{
 		ID:              generateTransferId(debitAccountId),
 		DebitAccountID:  debitAccountId,
@@ -193,62 +140,21 @@ func PlaceAuthorization(ctx context.Context, debitAccountId tbtypes.Uint128, cre
 		Ledger:  1,
 		Code:    1,
 	}
-	res, err := tbClient.CreateTransfers([]tbtypes.Transfer{transfer})
+	res, err := a.TbClient.CreateTransfers([]tbtypes.Transfer{transfer})
 	if err != nil {
 		log.Printf("Error creating transfer batch %s", err)
 		return InvalidTransferId, err
 	}
-	log.Printf("created transfer ")
 	for _, t := range res {
 		id := int(t.Index)
 		log.Printf("Transfer %s created %d : id", t.Result, id)
 	}
-	storeAuthorizationRedis(debitAccountId, amount, transfer.ID, redisClient)
+	storeAuthorizationRedis(debitAccountId, amount, transfer.ID, a.RedisClient)
 	return transfer.ID, nil
 }
 
-//func IsAuthorizationPending(ctx context.Context, transferId tbtypes.Uint128) (bool, error) {
-//	tbClient, err := tb.NewClient(0, []string{"3000"}, 1)
-//	if err != nil {
-//		log.Printf("Error creating tbclient: %s", err)
-//	}
-//
-//	defer tbClient.Close()
-//
-//	var transfersList []tbtypes.Uint128
-//	transfersList = append(transfersList, transferId)
-//
-//	tranfers, err := tbClient.LookupTransfers(transfersList)
-//
-//	if err != nil {
-//		rlog.Error("failed to get transfer", "error", err)
-//		return false, err
-//	}
-//
-//	if len(tranfers) == 0 {
-//		rlog.Info("transfer not found")
-//		return false, nil
-//	}
-//
-//	transfer := tranfers[0]
-//
-//	pendingFlag := tbtypes.TransferFlags{Pending: true}.ToUint16()
-//
-//	if transfer.Flags == pendingFlag && transfer.Timeout+transfer.Timestamp > uint64(time.Now().UnixNano()) {
-//		return true, nil
-//	}
-//	return false, nil
-//}
-
-func MatchPresentment(ctx context.Context, debitAccountId tbtypes.Uint128, amount uint64, redisClient redis.Client) (tbtypes.Uint128, error) {
-	tbClient, err := tb.NewClient(0, []string{"3000"}, 1)
-	if err != nil {
-		log.Printf("Error creating tbclient: %s", err)
-	}
-
-	defer tbClient.Close()
-
-	authorizations, err := getAuthorizationRedis(debitAccountId, amount, redisClient)
+func (a *Activities) MatchPresentment(_ context.Context, debitAccountId tbtypes.Uint128, amount uint64) (tbtypes.Uint128, error) {
+	authorizations, err := getAuthorizationRedis(debitAccountId, amount, a.RedisClient)
 	log.Printf("got authorizations: %s", authorizations)
 	if err != nil {
 		log.Printf("Could not get authorization from redis: %s", err)
@@ -259,7 +165,7 @@ func MatchPresentment(ctx context.Context, debitAccountId tbtypes.Uint128, amoun
 		return InvalidTransferId, nil
 	}
 
-	transfers, err := tbClient.LookupTransfers(authorizations)
+	transfers, err := a.TbClient.LookupTransfers(authorizations)
 	if err != nil {
 		log.Printf("Could not fetch transfers: %s", err)
 		return InvalidTransferId, err
@@ -272,12 +178,11 @@ func MatchPresentment(ctx context.Context, debitAccountId tbtypes.Uint128, amoun
 			log.Printf("pending transfer: %s", transfer)
 			return transfer.ID, nil
 		} else {
-			log.Printf("removing voided transfer: %s with flag %d expiry %d timestamp %d %t %t", transfer, transfer.Flags, transfer.Timestamp+transfer.Timeout, uint64(time.Now().UnixNano()), transfer.Timestamp+transfer.Timeout < uint64(time.Now().UnixNano()), transfer.Flags == pendingFlag)
-			err = voidAuthorization(transfer.ID, tbClient)
+			err = voidAuthorization(transfer.ID, a.TbClient)
 			if err != nil {
 				log.Printf("Could not void pending auth: %s", err)
 			}
-			err = removeVoidAuthorizationRedis(debitAccountId, amount, transfer.ID, redisClient)
+			err = removeVoidAuthorizationRedis(debitAccountId, amount, transfer.ID, a.RedisClient)
 			if err != nil {
 				log.Printf("Could not remove authorization from redis: %s", err)
 			}
@@ -286,20 +191,13 @@ func MatchPresentment(ctx context.Context, debitAccountId tbtypes.Uint128, amoun
 	return InvalidTransferId, nil
 }
 
-func PostPendingTransfer(ctx context.Context, transferId, debitAccountId tbtypes.Uint128, amount uint64, redisClient redis.Client) error {
-	tbClient, err := tb.NewClient(0, []string{"3000"}, 1)
-	if err != nil {
-		log.Printf("Error creating tbclient: %s", err)
-	}
-
-	defer tbClient.Close()
-
-	err = postPendingAuthorization(ctx, debitAccountId, transferId, tbClient)
+func (a *Activities) PostPendingTransfer(_ context.Context, transferId, debitAccountId tbtypes.Uint128, amount uint64) error {
+	err := postPendingAuthorization(debitAccountId, transferId, a.TbClient)
 	if err != nil {
 		log.Printf("Error in postPendingAuthorization: %s for transfer: %s, continuing", err, transferId)
 		return err
 	}
-	err = removeVoidAuthorizationRedis(debitAccountId, amount, transferId, redisClient)
+	err = removeVoidAuthorizationRedis(debitAccountId, amount, transferId, a.RedisClient)
 	if err != nil {
 		log.Printf("Could not remove authorization from redis: %s", err)
 	}

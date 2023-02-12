@@ -23,8 +23,10 @@ func Auth(ctx workflow.Context, accountId tbtypes.Uint128, amount uint64, redisC
 
 	ctx = workflow.WithActivityOptions(ctx, options)
 
+	var a *Activities
+
 	var accountExists bool
-	err := workflow.ExecuteActivity(ctx, CheckAccountExistsWithSufficientBalance, accountId, amount).Get(ctx, &accountExists)
+	err := workflow.ExecuteActivity(ctx, a.CheckAccountExistsWithSufficientBalance, accountId, amount).Get(ctx, &accountExists)
 	if err != nil {
 		log.Printf("Could not check account existence: %s", err)
 		return false, err
@@ -38,7 +40,7 @@ func Auth(ctx workflow.Context, accountId tbtypes.Uint128, amount uint64, redisC
 	log.Printf("starting authorization for %d on account %s %s %s", amount, accountId, accountId.String(), creditAccountIdCasted.String())
 
 	var transferId tbtypes.Uint128
-	err = workflow.ExecuteActivity(ctx, PlaceAuthorization, accountId, creditAccountIdCasted, amount, redisClient).Get(ctx, &transferId)
+	err = workflow.ExecuteActivity(ctx, a.PlaceAuthorization, accountId, creditAccountIdCasted, amount, redisClient).Get(ctx, &transferId)
 	if err != nil {
 		log.Printf("Could not place authoriation: %s", err)
 		return false, err
@@ -74,9 +76,10 @@ func Present(ctx workflow.Context, accountId tbtypes.Uint128, amount uint64, red
 	}
 
 	ctx = workflow.WithActivityOptions(ctx, options)
+	var a *Activities
 
 	var accountExists bool
-	err := workflow.ExecuteActivity(ctx, CheckAccountExists, accountId).Get(ctx, &accountExists)
+	err := workflow.ExecuteActivity(ctx, a.CheckAccountExists, accountId).Get(ctx, &accountExists)
 	if err != nil {
 		log.Printf("Could not check account existence: %s", err)
 		return false, err
@@ -87,7 +90,7 @@ func Present(ctx workflow.Context, accountId tbtypes.Uint128, amount uint64, red
 	}
 
 	var transferId tbtypes.Uint128
-	err = workflow.ExecuteActivity(ctx, MatchPresentment, accountId, amount, redisClient).Get(ctx, &transferId)
+	err = workflow.ExecuteActivity(ctx, a.MatchPresentment, accountId, amount, redisClient).Get(ctx, &transferId)
 	if err != nil {
 		log.Printf("Error in finding pending auth: %s", err)
 		return false, err
@@ -98,7 +101,7 @@ func Present(ctx workflow.Context, accountId tbtypes.Uint128, amount uint64, red
 		return false, nil
 	}
 
-	err = workflow.ExecuteActivity(ctx, PostPendingTransfer, transferId, accountId, amount, redisClient).Get(ctx, nil)
+	err = workflow.ExecuteActivity(ctx, a.PostPendingTransfer, transferId, accountId, amount, redisClient).Get(ctx, nil)
 	if err != nil {
 		log.Printf("Could not post pending transfer: %s", err)
 		return false, err
