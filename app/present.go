@@ -20,7 +20,7 @@ func (s *Service) Present(ctx context.Context, accountId string, amount uint64) 
 		ID:        uuid.New().String(),
 		TaskQueue: taskQueue,
 	}
-	we, err := s.temporalClient.ExecuteWorkflow(ctx, options, workflow.Present, accountIdCasted, amount, s.redisClient)
+	we, err := s.temporalClient.ExecuteWorkflow(ctx, options, workflow.Present, accountIdCasted, amount)
 
 	if err != nil {
 		rlog.Error("failed to start workflow", "error", err)

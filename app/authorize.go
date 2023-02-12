@@ -20,7 +20,7 @@ func (s *Service) Authorize(ctx context.Context, accountId string, amount uint64
 		TaskQueue: taskQueue,
 	}
 	accountIdCasted, _ := tbtypes.HexStringToUint128(accountId)
-	we, err := s.temporalClient.ExecuteWorkflow(ctx, options, workflow.Auth, accountIdCasted, amount, s.redisClient)
+	we, err := s.temporalClient.ExecuteWorkflow(ctx, options, workflow.Auth, accountIdCasted, amount)
 
 	if err != nil {
 		rlog.Error("failed to start workflow", "error", err)
@@ -28,10 +28,21 @@ func (s *Service) Authorize(ctx context.Context, accountId string, amount uint64
 	}
 	rlog.Info("started workflow", "id", we.GetID(), "run_id", we.GetRunID())
 
-	var authorized bool
-	err = we.Get(ctx, &authorized)
+	var transferId tbtypes.Uint128
+	err = we.Get(ctx, &transferId)
 	if err != nil {
 		return &AuthorizeResponse{Authorized: false}, err
 	}
-	return &AuthorizeResponse{Authorized: authorized}, nil
+	if transferId == workflow.InvalidTransferId {
+		return &AuthorizeResponse{Authorized: false}, nil
+	}
+	options = client.StartWorkflowOptions{
+		ID:        uuid.New().String(),
+		TaskQueue: taskQueue,
+	}
+	_, err = s.temporalClient.ExecuteWorkflow(ctx, options, workflow.Void, transferId)
+	if err != nil {
+		return &AuthorizeResponse{Authorized: false}, err
+	}
+	return &AuthorizeResponse{Authorized: true}, nil
 }

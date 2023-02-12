@@ -2,7 +2,6 @@ package workflow
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"github.com/go-redis/redis"
 	tb "github.com/tigerbeetledb/tigerbeetle-go"
@@ -122,7 +121,7 @@ func (a *Activities) CheckAccountExistsWithSufficientBalance(_ context.Context, 
 		break
 	}
 	if account.CreditsPosted-account.DebitsPosted < amount {
-		return false, errors.New("insufficient balance")
+		return false, nil
 	}
 	return true, nil
 }
@@ -136,9 +135,9 @@ func (a *Activities) PlaceAuthorization(_ context.Context, debitAccountId tbtype
 		Flags: tbtypes.TransferFlags{
 			Pending: true,
 		}.ToUint16(),
-		Timeout: uint64(AuthorizationHoldDuration.Nanoseconds()),
-		Ledger:  1,
-		Code:    1,
+		//Timeout: uint64(AuthorizationHoldDuration.Nanoseconds()), TODO: check why this isn't working as expeceted
+		Ledger: 1,
+		Code:   1,
 	}
 	res, err := a.TbClient.CreateTransfers([]tbtypes.Transfer{transfer})
 	if err != nil {
@@ -174,10 +173,11 @@ func (a *Activities) MatchPresentment(_ context.Context, debitAccountId tbtypes.
 	pendingFlag := tbtypes.TransferFlags{Pending: true}.ToUint16()
 	for _, transfer := range transfers {
 		log.Printf("checking for transfer: %s", transfer)
-		if transfer.Flags == pendingFlag && transfer.Timestamp+transfer.Timeout > uint64(time.Now().UnixNano()) {
+		if transfer.Flags == pendingFlag && transfer.Timestamp+uint64(AuthorizationHoldDuration.Nanoseconds()) > uint64(time.Now().UnixNano()) {
 			log.Printf("pending transfer: %s", transfer)
 			return transfer.ID, nil
 		} else {
+			log.Printf("voiding transfer: %s", transfer)
 			err = voidAuthorization(transfer.ID, a.TbClient)
 			if err != nil {
 				log.Printf("Could not void pending auth: %s", err)
@@ -200,6 +200,47 @@ func (a *Activities) PostPendingTransfer(_ context.Context, transferId, debitAcc
 	err = removeVoidAuthorizationRedis(debitAccountId, amount, transferId, a.RedisClient)
 	if err != nil {
 		log.Printf("Could not remove authorization from redis: %s", err)
+	}
+	return nil
+}
+
+func (a *Activities) IsPendingTransfer(_ context.Context, transferId tbtypes.Uint128) (bool, error) {
+	var transfers []tbtypes.Uint128
+	transfersList := append(transfers, transferId)
+
+	transfer, err := a.TbClient.LookupTransfers(transfersList)
+	if err != nil {
+		log.Printf("Could not fetch transfer: %s", err)
+		return false, err
+	}
+
+	if len(transfer) == 0 {
+		log.Printf("transfer not found")
+		return false, nil
+	}
+
+	pendingFlag := tbtypes.TransferFlags{Pending: true}.ToUint16()
+	if transfer[0].Flags == pendingFlag {
+		return true, nil
+	}
+	return false, nil
+}
+
+func (a *Activities) VoidAuthorization(_ context.Context, transferId tbtypes.Uint128) error {
+	transfer := tbtypes.Transfer{
+		ID: generateTransferId(transferId),
+		Flags: tbtypes.TransferFlags{
+			VoidPendingTransfer: true,
+		}.ToUint16(),
+		PendingID: transferId,
+	}
+	res, err := a.TbClient.CreateTransfers([]tbtypes.Transfer{transfer})
+	if err != nil {
+		log.Printf("Error creating transfer batch %s", err)
+		return err
+	}
+	for _, t := range res {
+		log.Printf("Transfer %s created %d : id", t.Result, transferId)
 	}
 	return nil
 }

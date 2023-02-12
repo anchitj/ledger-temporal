@@ -47,6 +47,7 @@ func initService() (*Service, error) {
 	w := worker.New(c, taskQueue, worker.Options{})
 	w.RegisterWorkflow(workflow.Auth)
 	w.RegisterWorkflow(workflow.Present)
+	w.RegisterWorkflow(workflow.Void)
 	activities := &workflow.Activities{RedisClient: redisClient, TbClient: tbClient}
 	w.RegisterActivity(activities)
 
